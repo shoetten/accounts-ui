@@ -53,12 +53,6 @@ export class LoginForm extends Tracker.Component {
     let changeState = Session.get(KEY_PREFIX + 'state');
     switch (changeState) {
       case 'enrollAccountToken':
-        this.setState({
-          formState: STATES.ENROLL_ACCOUNT
-        });
-        Session.set(KEY_PREFIX + 'state', null);
-        break;
-
       case 'resetPasswordToken':
         this.setState({
           formState: STATES.PASSWORD_CHANGE
@@ -171,17 +165,6 @@ export class LoginForm extends Tracker.Component {
     };
   }
 
-  getSetPasswordField() {
-    return {
-      id: 'newPassword',
-      hint: T9n.get('enterPassword'),
-      label: T9n.get('choosePassword'),
-      type: 'password',
-      required: true,
-      onChange: this.handleChange.bind(this, 'newPassword')
-    };
-  }
-
   handleChange(field, evt) {
     let value = evt.target.value;
     switch (field) {
@@ -268,16 +251,12 @@ export class LoginForm extends Tracker.Component {
     }
 
     if (this.showPasswordChangeForm()) {
-      if (Meteor.isClient && !Accounts._loginButtonsSession.get('resetPasswordToken')) {
+      if (Meteor.isClient && !Accounts._loginButtonsSession.get('resetPasswordToken')
+        && !Accounts._loginButtonsSession.get('enrollAccountToken')) {
         loginFields.push(this.getPasswordField());
       }
       loginFields.push(this.getNewPasswordField());
     }
-
-    if (this.showEnrollAccountForm()) {
-      loginFields.push(this.getSetPasswordField());
-    }
-
 
     return _.indexBy(loginFields, 'id');
   }
@@ -372,10 +351,10 @@ export class LoginForm extends Tracker.Component {
       });
     }
 
-    if (this.showPasswordChangeForm() || this.showEnrollAccountForm()) {
+    if (this.showPasswordChangeForm()) {
       loginButtons.push({
         id: 'changePassword',
-        label: (this.showPasswordChangeForm() ? T9n.get('changePassword') : T9n.get('setPassword')),
+        label: T9n.get('changePassword'),
         type: 'submit',
         disabled: waiting,
         onClick: this.passwordChange.bind(this)
@@ -410,11 +389,6 @@ export class LoginForm extends Tracker.Component {
   showPasswordChangeForm() {
     return(Package['accounts-password']
       && this.state.formState == STATES.PASSWORD_CHANGE);
-  }
-
-  showEnrollAccountForm() {
-    return(Package['accounts-password']
-      && this.state.formState == STATES.ENROLL_ACCOUNT);
   }
 
   showCreateAccountLink() {
@@ -470,7 +444,9 @@ export class LoginForm extends Tracker.Component {
       username = null,
       email = null,
       usernameOrEmail = null,
-      password
+      password,
+      formState,
+      onSubmitHook
     } = this.state;
 
     let loginSelector;
@@ -512,6 +488,7 @@ export class LoginForm extends Tracker.Component {
     }
 
     Meteor.loginWithPassword(loginSelector, password, (error, result) => {
+      onSubmitHook(error,formState);
       if (error) {
         this.showMessage(T9n.get(`error.accounts.${error.reason}`) || T9n.get("Unknown error"), 'error');
       }
@@ -543,7 +520,7 @@ export class LoginForm extends Tracker.Component {
   }
 
   oauthSignIn(serviceName) {
-    const { formState, waiting, user } = this.state;
+    const { formState, waiting, user, onSubmitHook } = this.state;
     //Thanks Josh Owens for this one.
     function capitalService() {
       return serviceName.charAt(0).toUpperCase() + serviceName.slice(1);
@@ -564,6 +541,7 @@ export class LoginForm extends Tracker.Component {
       options.forceApprovalPrompt = Accounts.ui._options.forceApprovalPrompt[serviceName];
 
     loginWithService(options, (error) => {
+      onSubmitHook(error,formState);
       if (error) {
         this.showMessage(T9n.get(`error.accounts.${error.reason}`) || T9n.get("Unknown error"));
       } else {
@@ -582,7 +560,8 @@ export class LoginForm extends Tracker.Component {
       email = null,
       usernameOrEmail = null,
       password,
-      formState
+      formState,
+      onSubmitHook
     } = this.state;
 
     if (username !== null) {
@@ -620,7 +599,7 @@ export class LoginForm extends Tracker.Component {
     }
     else if (!validatePassword(password)) {
       this.showMessage(T9n.get("error.minChar").replace(/7/, Accounts.ui._options.minimumPasswordLength), 'warning');
-      this.state.onSubmitHook("error.minChar", formState);
+      onSubmitHook("error.minChar", formState);
       return;
     }
     else {
@@ -634,13 +613,14 @@ export class LoginForm extends Tracker.Component {
         if (error) {
           this.showMessage(T9n.get(`error.accounts.${error.reason}`) || T9n.get("Unknown error"), 'error');
           if (T9n.get(`error.accounts.${error.reason}`)) {
-            this.state.onSubmitHook(`error.accounts.${error.reason}`, formState);
+            onSubmitHook(`error.accounts.${error.reason}`, formState);
           }
           else {
-            this.state.onSubmitHook("Unknown error", formState);
+            onSubmitHook("Unknown error", formState);
           }
         }
         else {
+          onSubmitHook(null, formState);
           this.setState({
             formState: STATES.PROFILE,
             message: null,
@@ -668,7 +648,9 @@ export class LoginForm extends Tracker.Component {
     const {
       email = '',
       usernameOrEmail = '',
-      waiting
+      waiting,
+      formState,
+      onSubmitHook
     } = this.state;
 
     if (waiting) {
@@ -685,7 +667,7 @@ export class LoginForm extends Tracker.Component {
         else {
           this.showMessage(T9n.get("info.emailSent"), 'success', 5000);
         }
-
+        onSubmitHook(error, formState);
         this.setState({ waiting: false });
       });
     }
@@ -699,24 +681,29 @@ export class LoginForm extends Tracker.Component {
         else {
           this.showMessage(T9n.get("info.emailSent"), 'success', 5000);
         }
-
+        onSubmitHook(error, formState);
         this.setState({ waiting: false });
       });
     }
     else {
+      let errMsg = null;
       if (_.contains([ "USERNAME_AND_EMAIL_NO_PASSWORD" ], passwordSignupFields())) {
-        this.showMessage(T9n.get("error.accounts.Invalid email or username"), 'warning');
+        errMsg = T9n.get("error.accounts.Invalid email or username");
       }
       else {
-        this.showMessage(T9n.get("error.accounts.Invalid email"), 'warning');
+        errMsg = T9n.get("error.accounts.Invalid email");
       }
+      this.showMessage(errMsg,'warning');
+      onSubmitHook(errMsg, formState);
     }
   }
 
   passwordReset() {
     const {
       email = '',
-      waiting
+      waiting,
+      formState,
+      onSubmitHook
     } = this.state;
 
     if (waiting) {
@@ -733,23 +720,29 @@ export class LoginForm extends Tracker.Component {
         else {
           this.showMessage(T9n.get("info.emailSent"), 'success', 5000);
         }
-
+        onSubmitHook(error, formState);
         this.setState({ waiting: false });
       });
     }
     else {
-      this.showMessage(T9n.get("error.accounts.Invalid email"), 'warning');
+      const errMsg = T9n.get("error.accounts.Invalid email");
+      onSubmitHook(errMsg, formState);
+      this.showMessage(errMsg,'warning');
     }
   }
 
   passwordChange() {
     const {
       password,
-      newPassword
+      newPassword,
+      formState,
+      onSubmitHook
     } = this.state;
 
     if ( !validatePassword(newPassword) ){
-      this.showMessage(T9n.get("error.minChar").replace(/7/, Accounts.ui._options.minimumPasswordLength), 'warning');
+      const errMsg = T9n.get("error.minChar").replace(/7/, Accounts.ui._options.minimumPasswordLength);
+      this.showMessage(errMsg,'warning');
+      onSubmitHook(errMsg,formState);
       return;
     }
 
@@ -761,9 +754,11 @@ export class LoginForm extends Tracker.Component {
       Accounts.resetPassword(token, newPassword, (error) => {
         if (error) {
           this.showMessage(T9n.get(`error.accounts.${error.reason}`) || T9n.get("Unknown error"), 'error');
+          onSubmitHook(error, formState);
         }
         else {
           this.showMessage(T9n.get('info.passwordChanged'), 'success', 5000);
+          onSubmitHook(null, formState);
           this.setState({ formState: STATES.PROFILE });
           Accounts._loginButtonsSession.set('resetPasswordToken', null);
           Accounts._loginButtonsSession.set('enrollAccountToken', null);
@@ -774,9 +769,11 @@ export class LoginForm extends Tracker.Component {
       Accounts.changePassword(password, newPassword, (error) => {
         if (error) {
           this.showMessage(T9n.get(`error.accounts.${error.reason}`) || T9n.get("Unknown error"), 'error');
+          onSubmitHook(error, formState);
         }
         else {
           this.showMessage(T9n.get('info.passwordChanged'), 'success', 5000);
+          onSubmitHook(null, formState);
           this.setState({ formState: STATES.PROFILE });
         }
       });
